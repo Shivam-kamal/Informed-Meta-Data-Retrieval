@@ -1,0 +1,15 @@
+env
+
+Local_LLM-v1/.env
+Local_LLM-v1/__pycache__
+Local_LLM-v1/.pyc
+Local_LLM-v1/.txt
+Local_LLM-v1/.md
+Local_LLM-v1/POST.txt
+
+OpenAI_LLM-v1/.env
+OpenAI_LLM-v1/__pycache__
+OpenAI_LLM-v1/.pyc
+OpenAI_LLM-v1/.txt
+OpenAI_LLM-v1/.md
+OpenAI_LLM-v1/POST.txt
