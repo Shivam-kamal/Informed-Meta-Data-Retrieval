@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field , model_validator
+from pydantic import AliasChoices, BaseModel, Field , model_validator
 
 
 class ChapterInfo(BaseModel):
@@ -29,6 +29,61 @@ class AutofillRequest(BaseModel):
     prompt: str = Field(..., min_length=3, description="Natural language prompt from user")
     context: PromptContext = Field(default_factory=PromptContext)
     existing_values: Dict[str, Any] = Field(default_factory=dict)
+    account_id: Optional[str] = None
+    strict_mode: bool = True
+
+class ChatbotMetadataRequest(BaseModel):
+    prompt: str = Field(..., min_length=3, description="Natural language prompt from user")
+    document_names: List[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices(
+            "document_names",
+            "documentNames",
+            "documents",
+            "docs",
+            "file_names",
+            "fileNames",
+            "files",
+        ),
+        description="Names of documents already selected by the user",
+    )
+    existing_values: Dict[str, Any] = Field(default_factory=dict)
+    context: PromptContext = Field(default_factory=PromptContext)
+    account_id: Optional[str] = None
+    strict_mode: bool = True
+
+class ConversationMemory(BaseModel):
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    document_names: List[str] = Field(default_factory=list)
+    pending_field: Optional[str] = None
+    asked_fields: List[str] = Field(default_factory=list)
+    turn_count: int = 0
+
+class ConversationTurnRequest(BaseModel):
+    session_id: Optional[str] = Field(default=None, description="Stable chat session id")
+    message: str = Field(
+        ...,
+        min_length=1,
+        validation_alias=AliasChoices("message", "prompt", "user_message", "userMessage"),
+    )
+    document_names: List[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices(
+            "document_names",
+            "documentNames",
+            "documents",
+            "docs",
+            "file_names",
+            "fileNames",
+            "files",
+        ),
+    )
+    memory: Optional[ConversationMemory] = None
+    existing_values: Dict[str, Any] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("existing_values", "existingValues", "metadata", "known_fields", "knownFields"),
+    )
+    context: PromptContext = Field(default_factory=PromptContext)
     account_id: Optional[str] = None
     strict_mode: bool = True
 
@@ -139,6 +194,11 @@ class FileInfo(BaseModel):
     content_type: str
     status: str
 
+class DocumentInfo(BaseModel):
+    file_name: str
+    kind: str
+    status: str
+
 class CombinedResponse(BaseModel):
     file_info: FileInfo
     files_info: List[FileInfo] = Field(default_factory=list)
@@ -149,6 +209,27 @@ class CombinedResponse(BaseModel):
     confidence: float
     raw_parsed: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
+class ChatbotMetadataResponse(BaseModel):
+    document_info: List[DocumentInfo] = Field(default_factory=list)
+    comments: Optional[str] = None
+    mapped_fields: Dict[str, Any] = Field(default_factory=dict)
+    unresolved_fields: List[str] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+    confidence: float
+    raw_parsed: Optional[Dict[str, Any]] = Field(default_factory=dict)
+
+class ConversationTurnResponse(BaseModel):
+    session_id: str
+    bot_message: str
+    next_action: Literal["ask_user", "ready", "error"]
+    pending_field: Optional[str] = None
+    missing_fields: List[str] = Field(default_factory=list)
+    memory: ConversationMemory
+    document_info: List[DocumentInfo] = Field(default_factory=list)
+    mapped_fields: Dict[str, Any] = Field(default_factory=dict)
+    warnings: List[str] = Field(default_factory=list)
+    confidence: float = 0.0
+    raw_parsed: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
 class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 try:
@@ -12,6 +13,23 @@ except ImportError:  # Allows fallback extraction before dependencies are instal
     OpenAI = None
 
 from schema import AutofillRequest, FormFieldUpdate
+
+
+def _load_local_env() -> None:
+    env_path = Path(__file__).with_name(".env")
+    if not env_path.exists():
+        return
+
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        cleaned = line.strip()
+        if not cleaned or cleaned.startswith("#") or "=" not in cleaned:
+            continue
+
+        key, value = cleaned.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
+
+
+_load_local_env()
 
 
 class OpenAILLMClient:
