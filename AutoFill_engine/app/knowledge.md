@@ -2,39 +2,51 @@
 
 ## What We Are Building
 
-We are building a production-ready FastAPI + LangGraph backend that converts user conversation and uploaded document context into a structured metadata JSON payload.
+This backend is a FastAPI + LangGraph conversational autofill engine.
 
-This is not a general chatbot.
+It receives a frontend payload containing:
+- the latest user message
+- the session id
+- uploaded document names
+- the current metadata JSON progress from the frontend
 
-This is a state-driven conversational form autofill engine.
+It returns:
+- the updated metadata JSON
+- missing required fields
+- the next bot question, if any
+- detected workflow warnings
+- the current workflow action
+
+This is not a general chatbot and it does not parse uploaded files.
 
 ---
 
-## Core Idea
+## Payload Contract
 
-The system:
-- receives user input and uploaded document references
-- incrementally builds metadata
-- keeps short-term conversation state
-- asks follow-up questions for missing required fields
-- returns structured JSON for frontend autofill or final POST submission
+The frontend sends document names only. The backend uses those names/extensions for format classification.
 
----
+Example request:
 
-## Architecture
+```json
+{
+  "message": "uploading a document title is Diet Coke and author is Shivam Kamal and i have doc1.pdf which is first chapter and their thumbnail is roz.jpg, company name is shivam",
+  "session_id": "string",
+  "documents": ["doc1.pdf", "roz.jpg", "doc2.pdf", "doc3.mp4"],
+  "metadata": {
+    "title": "Diet Coke",
+    "keyAuthor": "Shivam Kamal",
+    "company": "shivam"
+  }
+}
+```
 
-- `app/main.py` - FastAPI app entrypoint
-- `app/routes.py` - API route layer
-- `app/models/state.py` - `ChatState` workflow state
-- `app/models/schemas.py` - request and response schemas
-- `app/models/metadata.py` - structured metadata schema placeholder
-- `app/services/llm.py` - extraction only, no business logic
-- `app/services/validation.py` - required field checks
-- `app/services/inference.py` - file type inference, pure logic
-- `app/services/merge.py` - metadata merge logic
-- `app/config/field_config.py` - required fields and follow-up questions
-- `app/workflow/graph.py` - LangGraph setup
-- `app/workflow/nodes/` - independent workflow nodes
+Important:
+- `documents` contains names like `doc1.pdf`, `roz.jpg`, `doc3.mp4`.
+- The backend does not open, download, or parse those files.
+- The frontend sends the current metadata progress on each request.
+- The backend merges the request metadata with previous session metadata.
+- If the bot asked for a field, the next user message is applied to that pending field.
+- The backend also tries to extract obvious metadata from the English `message`.
 
 ---
 
@@ -58,124 +70,195 @@ Response:
 ```json
 {
   "session_id": "session-id",
-  "message": "assistant message or follow-up question",
+  "bot_message": "assistant message or follow-up question",
   "metadata": {},
   "missing_fields": [],
+  "warnings": [],
   "pending_field": null,
+  "question": null,
   "next_action": "ask_user"
 }
 ```
 
 ---
 
-## Current Required Fields
+## Production Format Rules
 
-- `fullName`
-- `email`
+Production format is resolved only from uploaded document names:
+
+- one PDF -> `pdf`
+- multiple PDFs -> `ebook`
+- one video -> `video`
+- multiple videos -> `ebook+ video`
+- PDFs plus videos -> `ebook+ video`
+- any Word, Excel, or PowerPoint file -> `MS Office`
+
+The detected format is written into both:
 - `fileType`
+- `formatType`
 
-These are currently minimal placeholder fields in `app/config/field_config.py`.
+Office files win over other uploaded names. For example, `deck.pptx` plus `doc1.pdf` resolves to `MS Office`.
+
+---
+
+## Workflow Warnings
+
+Warnings are added when existing or requested metadata conflicts with uploaded file names:
+
+- non-single-PDF cases mapped as `pdf`
+- single/no-PDF cases mapped as `ebook`
+- non-single-video cases mapped as `video`
+
+Warnings are returned in `ChatResponse.warnings`.
 
 ---
 
 ## Current Workflow
 
-Implemented LangGraph skeleton:
+The active LangGraph workflow is:
 
 1. `apply_pending_field`
-2. `validate_required_fields`
-3. `END`
+2. `infer_metadata`
+3. `merge_metadata`
+4. `validate_required_fields`
+5. `decide_next_action`
+6. `generate_bot_response`
+7. `END`
 
-Current behavior:
-- If `pending_field` exists, the latest user message is saved into `metadata[pending_field]`.
-- Required fields are checked deterministically.
-- If fields are missing, the workflow asks one follow-up question.
-- If no required fields are missing, the workflow returns `next_action = "ready"`.
-
----
-
-## Important Rules
-
-- LLM is only used for extraction.
-- No business logic goes inside `llm.py`.
-- Workflow behavior should be deterministic.
-- State is the single source of truth.
-- Each node should be independent and testable.
-- Do not overwrite valid metadata unnecessarily.
-- Keep implementation minimal until each layer is needed.
+Behavior:
+- `apply_pending_field` saves the meaning of the latest user reply into the previous `pending_field`.
+- `infer_metadata` classifies the production format from `documents` and extracts obvious fields from `message`.
+- `merge_metadata` writes inferred fields into metadata, including `fileType` and `formatType`.
+- `validate_required_fields` checks required fields from `FIELD_CONFIG`.
+- `decide_next_action` asks for the first missing required field or marks the form ready.
+- `generate_bot_response` returns the final bot message or follow-up question.
 
 ---
 
-## Pending Field Logic
+## Metadata Flow
 
-Implemented in `app/workflow/nodes/apply_pending.py`.
+Metadata has three sources:
 
-If `pending_field` exists:
-- treat `user_message` as the answer
-- update `metadata[pending_field]`
-- clear `pending_field`
-- clear `pending_question`
-- continue workflow
+1. Previous session metadata stored in memory.
+2. Current request metadata sent by the frontend.
+3. Inferred metadata from uploaded document names.
+4. Extracted metadata from the latest English user message.
 
----
-
-## Validation Logic
-
-Implemented in `app/services/validation.py`.
-
-Current behavior:
-- reads required fields from `FIELD_CONFIG["required"]`
-- treats `None`, empty string, empty list, and empty dict as missing
-- returns a list of missing required fields
+Merge behavior:
+- Request metadata updates previous session metadata.
+- Inferred `fileType`, `formatType`, `file`, and `officeFile` can overwrite stale values because they are derived from the latest uploaded names.
+- Message-extracted values can fill fields such as `title`, `keyAuthor`, `company`, `product`, `country`, `coverPhoto`, and `chapter`.
+- Chapter rows are merged by `uploadFile` or `selectedVideo`, so a title for `doc1.pdf` updates the `doc1.pdf` row without deleting blank rows for other files.
+- Other filled metadata should not be overwritten unnecessarily.
 
 ---
 
-## Short-Term State
+## Message Extraction
 
-Implemented in `app/routes.py` as temporary in-memory state:
+The backend can map natural language replies into metadata fields.
 
-```python
-_sessions: dict[str, ChatState] = {}
+Examples:
+
+- `the name of the company is DietCoke` -> `company: "DietCoke"`
+- `title is Diet Coke` -> `title: "Diet Coke"`
+- `author is Shivam Kamal` -> `keyAuthor: "Shivam Kamal"`
+- `thumbnail is roz.jpg` -> `coverPhoto: "roz.jpg"` when `roz.jpg` is in `documents`
+- `doc1.pdf is chapter 1 titled Introduction to LLM` -> updates the `chapter` row for `doc1.pdf`
+
+OpenAI can be used for message extraction when configured. A deterministic fallback handles common phrases so the workflow still works when OpenAI is unavailable.
+
+---
+
+## Chapter Flow
+
+For uploaded PDFs/videos, the backend creates chapter rows in this shape:
+
+```json
+{
+  "chapterTitle": "",
+  "uploadFile": "doc1.pdf",
+  "fileValue": "doc1.pdf",
+  "selectedVideo": ""
+}
 ```
 
-This is acceptable for initial boilerplate only. Production should replace this with Redis, a database, or a LangGraph checkpoint store.
+Rules:
+- PDF rows use `uploadFile` and `fileValue`.
+- Video rows use `selectedVideo`.
+- If the user gives chapter info in the message, the matching row is filled.
+- If any required chapter row has a blank `chapterTitle`, validation adds `chapter` to `missing_fields`.
+- The bot asks the user to list chapter titles in order or with file names.
+
+---
+
+## Architecture
+
+- `app/main.py` - FastAPI app entrypoint
+- `app/routes.py` - API route layer and in-memory session handling
+- `app/models/schemas.py` - request and response schemas
+- `app/models/state.py` - workflow state
+- `app/config/field_config.py` - required fields and follow-up questions
+- `app/services/inference.py` - filename-based format classification and warnings
+- `app/services/merge.py` - metadata merge logic
+- `app/services/validation.py` - required field validation
+- `app/services/response_generator.py` - bot response generation
+- `app/services/llm.py` - English message metadata extraction; no document parsing
+- `app/workflow/graph.py` - LangGraph workflow wiring
+- `app/workflow/nodes/` - workflow node functions
+
+---
+
+## Current Required Fields
+
+Configured in `app/config/field_config.py`.
+
+Current required user fields:
+- `company`
+- `product`
+- `country`
+- `production`
+- `expDatetime`
+- `productionNotes`
+
+Current required inferred field:
+- `fileType`
+
+Required LLM/source fields may exist in config, but validation currently asks only for required user fields and inferred fields handled by the workflow.
 
 ---
 
 ## Done So Far
 
-- Created minimal FastAPI app in `app/main.py`
-- Added single POST route in `app/routes.py`
-- Added in-memory session handling
-- Added request and response schemas in `app/models/schemas.py`
-- Cleaned up `ChatState` in `app/models/state.py`
-- Added placeholder required fields and questions in `app/config/field_config.py`
-- Added required field validation service in `app/services/validation.py`
-- Added LangGraph workflow skeleton in `app/workflow/graph.py`
-- Added `apply_pending_field` node in `app/workflow/nodes/apply_pending.py`
-- Verified Python compilation with `compileall`
+- Created FastAPI `/chat` endpoint.
+- Added in-memory session state.
+- Added request/response schemas.
+- Added pending-field follow-up handling.
+- Added frontend metadata progress merging.
+- Added filename-based production format inference.
+- Added `fileType` and `formatType` population.
+- Added workflow warnings for conflicting format mappings.
+- Added English message extraction for pending answers and obvious metadata.
+- Added default chapter rows for uploaded PDFs/videos.
+- Added chapter-title validation and chapter follow-up question.
+- Added chapter merge by `uploadFile`/`selectedVideo`.
+- Added deterministic required-field validation.
+- Wired inference and merge into LangGraph workflow.
+- Disabled document parsing and LLM extraction for uploaded files.
+- Verified compilation with `python -m compileall app`.
 
 ---
 
 ## Not Done Yet
 
-- LLM extraction node is not implemented
-- Metadata merge node is not implemented
-- File type inference node is not connected
-- Validation node is still inside `graph.py`, not moved to `workflow/nodes/validate.py`
-- `metadata.py` schema is still empty
-- No persistence beyond in-memory sessions
-- No tests yet
-- Runtime smoke test could not run because local environment is missing `langgraph`
+- Define final structured metadata schema in `app/models/metadata.py`.
+- Move `validate_required_fields` from `graph.py` into `workflow/nodes/validate.py`.
+- Add tests for format inference, warnings, metadata merge, and pending-field flow.
+- Replace in-memory sessions with persistent storage for production.
 
 ---
 
-## What To Do Next
+## Key Alignment Rule
 
-1. Install or fix `langgraph` in the active environment.
-2. Move `validate_required_fields` into `app/workflow/nodes/validate.py`.
-3. Implement basic metadata schema in `app/models/metadata.py`.
-4. Add extraction node that calls `services/llm.py`.
-5. Add merge node using `services/merge.py`.
-6. Add file type inference node using `services/inference.py`.
-7. Add focused tests for validation and `apply_pending_field`.
+The backend should stay aligned to this model:
+
+Frontend sends current state plus document names. Backend updates metadata deterministically, classifies upload format from filenames, asks for missing required fields, and returns the updated JSON progress.

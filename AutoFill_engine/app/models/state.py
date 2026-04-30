@@ -20,5 +20,7 @@ class ChatState(TypedDict):
     bot_message: NotRequired[str]
     next_action: NotRequired[NextAction]
     raw_llm_response: NotRequired[dict[str, Any]]
+    extracted_documents: NotRequired[list[dict[str, Any]]]
+    inferred_metadata: NotRequired[dict[str, Any]]
     warnings: NotRequired[list[str]]
     is_followup: NotRequired[bool]

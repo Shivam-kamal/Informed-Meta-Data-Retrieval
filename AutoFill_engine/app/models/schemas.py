@@ -62,6 +62,7 @@ class ChatResponse(BaseModel):
     bot_message: str
     metadata: dict[str, Any] = Field(default_factory=dict)
     missing_fields: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
     pending_field: str | None = None
     question: str | None = None
     next_action: Literal["ask_user", "ready", "error"]
