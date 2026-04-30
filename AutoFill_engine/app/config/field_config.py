@@ -1,13 +1,11 @@
 FIELD_CONFIG = {
     "required": [
-        "fullName",
-        "email",
+        "company",
         "fileType",
     ]
 }
 
 QUESTIONS = {
-    "fullName": "What is your full name?",
-    "email": "What email address should I use?",
+    "company": "Please enter company name.",
     "fileType": "What type of file are you submitting?",
 }

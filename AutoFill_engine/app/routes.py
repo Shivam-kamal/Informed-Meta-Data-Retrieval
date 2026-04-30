@@ -2,13 +2,21 @@ from uuid import uuid4
 
 from fastapi import APIRouter
 
-from app.models.schemas import ChatRequest, ChatResponse
+from app.models.schemas import FRONTEND_METADATA_TEMPLATE, ChatRequest, ChatResponse
 from app.models.state import ChatState, Message
 from app.workflow.graph import run_workflow
 
 router = APIRouter()
 
 _sessions: dict[str, ChatState] = {}
+
+
+def _full_metadata(metadata: dict | None) -> dict:
+    metadata = metadata or {}
+    return {
+        key: metadata.get(key)
+        for key in FRONTEND_METADATA_TEMPLATE
+    }
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -23,7 +31,7 @@ def chat(request: ChatRequest) -> ChatResponse:
         "session_id": session_id,
         "user_message": request.message,
         "documents": request.documents,
-        "metadata": request.metadata or previous_state.get("metadata", {}),
+        "metadata": _full_metadata(request.metadata or previous_state.get("metadata", {})),
         "messages": messages[-5:],
     }
 
@@ -39,9 +47,10 @@ def chat(request: ChatRequest) -> ChatResponse:
 
     return ChatResponse(
         session_id=session_id,
-        message=result.get("bot_message", ""),
-        metadata=result.get("metadata", {}),
+        bot_message=result.get("bot_message", ""),
+        metadata=_full_metadata(result.get("metadata", {})),
         missing_fields=result.get("missing_fields", []),
         pending_field=result.get("pending_field"),
+        question=result.get("pending_question"),
         next_action=result.get("next_action", "ready"),
     )
