@@ -13,3 +13,10 @@ OpenAI_LLM-v1/.pyc
 OpenAI_LLM-v1/.txt
 OpenAI_LLM-v1/.md
 OpenAI_LLM-v1/POST.txt
+
+AutoFill/.env
+AutoFill/__pycache__
+AutoFill/.pyc
+AutoFill/.txt
+AutoFill/.md
+AutoFill/POST.txt

@@ -1,0 +1,55 @@
+
+POST REQUEST --
+
+{
+  "productionNotes": null, * Optional 
+  "production": 40,
+  "sales": 0,
+  "costCenter": null,
+  "limit": null,
+  "file": "(binary)",
+  "officeFile": null,
+  "title": "test_Flow",
+  "expDatetime": "2027-04-13T11:09:43.000Z",
+  "company": "test1",
+  "country": "Andorra",
+  "pdfSubTitle": "title",
+  "keyAuthor": "nishant",
+  "multiplePublisher": [],
+  "allowShare": null,
+  "allowDownload": true,
+  "associatedAge": [],
+  "associatedTouchpoint": [],
+  "femaleOriented": false,
+  "pushed_vwdJourney": false,
+  "hideHCP": false,
+  "creation_date": null,
+  "marketing_folder_name": null,
+  "allowPrint": null,
+  "product": "asdas",
+  "fileType": "pdf",
+  "coverPhoto": null,
+  "chapter": [
+    {
+      "chapterTitle": "",
+      "uploadFile": "",
+      "fileValue": "",
+      "selectedVideo": ""
+    }
+  ],
+  "specialRequirment": null,
+  "createdBy": "rjiGlqA9DXJVH7bDDTX0Lg==",
+  "category": null,
+  "formatType": null,
+  "ibu": null,
+  "allowOneSource": null,
+  "allowLibrary": 1,
+  "allowRequest": 0,
+  "allowDraft": false,
+  "allowVideo": 0,
+  "comDatetime": null,
+  "cpdValue": null,
+  "tags": null,
+  "functional_tags": null,
+  "pushed_usa_flag": false
+}
