@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from openai import OpenAI
 
 from app.core.config import Settings
+from app.utils.date_parser import parse_relative_date
 
 logger = logging.getLogger(__name__)
 
@@ -130,10 +132,12 @@ def _extract_with_openai(
                     "role": "system",
                     "content": (
                         "Extract metadata from the user's message only. Return strict JSON. "
-                        "Allowed keys: company, product, country, production, expDatetime, "
+                        "Allowed keys: company, product, country, expDatetime, "
                         "productionNotes, title, keyAuthor, coverPhoto, chapter. "
+                        "there could be posibility that user might talk in normal language and typos are possible if you find some confusion please reply instantly please re frame the prompt"
                         "chapter must be a list of objects with chapterTitle, uploadFile, "
-                        "fileValue, selectedVideo. Use uploaded document names when mentioned. "
+                        "fileValue, selectedVideo. Use uploaded document names when mentioned."
+                        "User can clearly mention the list of chapters that are mapped to chapters respectively Please give attention to this point."
                         "Do not invent values."
                     ),
                 },
@@ -159,13 +163,40 @@ def _extract_with_openai(
     return _json_from_message(response.choices[0].message.content or "{}")
 
 
+def _is_valid_iso_datetime(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+
+    value = value.strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?", value):
+        return False
+
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+
+    return True
+
+
 def extract_message_metadata(
     message: str,
     documents: list[str],
     pending_field: str | None = None,
 ) -> dict[str, Any]:
     metadata = _heuristic_metadata(message, documents)
+    metadata.pop("expDatetime", None)
+
+    parsed_exp_datetime = parse_relative_date(message)
+    if parsed_exp_datetime:
+        metadata["expDatetime"] = parsed_exp_datetime
+
     llm_metadata = _extract_with_openai(message, documents, pending_field)
+    if parsed_exp_datetime:
+        llm_metadata.pop("expDatetime", None)
+    elif "expDatetime" in llm_metadata and not _is_valid_iso_datetime(llm_metadata["expDatetime"]):
+        llm_metadata.pop("expDatetime", None)
+
     metadata.update({key: value for key, value in llm_metadata.items() if value not in (None, "", [], {})})
     return metadata
 
