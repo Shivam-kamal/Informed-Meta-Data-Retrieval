@@ -7,6 +7,7 @@ logger = logging.getLogger(__name__)
 
 
 def decide_next_action(state: ChatState) -> ChatState:
+   
     missing_fields = state.get("missing_fields", [])
 
     if missing_fields:
