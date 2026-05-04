@@ -97,7 +97,7 @@ def chat(request: ChatRequest) -> ChatResponse:
     return ChatResponse(
         session_id=session_id,
         bot_message=result.get("bot_message", ""),
-        metadata=_full_metadata(result.get("metadata", {})),
+        mapped_fields=_full_metadata(result.get("metadata", {})),
         missing_fields=result.get("missing_fields", []),
         warnings=result.get("warnings", []),
         pending_field=result.get("pending_field"),

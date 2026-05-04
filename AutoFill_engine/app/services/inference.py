@@ -149,6 +149,12 @@ def infer_file_metadata(
 
 def infer_default_chapters(documents: list[str]) -> list[dict[str, Any]]:
     chapters: list[dict[str, Any]] = []
+    production_format = resolve_production_format(documents)
+
+    if production_format not in {"ebook", "ebook+ video"}:
+        return []
+
+    chapters:list[dict[str,Any]] = []
 
     for document in documents:
         category = infer_document_category(document)

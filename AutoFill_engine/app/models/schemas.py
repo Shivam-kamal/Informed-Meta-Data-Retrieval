@@ -60,7 +60,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     session_id: str
     bot_message: str
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    mapped_fields: dict[str, Any] = Field(default_factory=dict)
     missing_fields: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     pending_field: str | None = None

@@ -5,9 +5,9 @@ from uuid import uuid4
 
 import streamlit as st
 
-from app.models.schemas import FRONTEND_METADATA_TEMPLATE
-from app.models.state import ChatState, Message
-from app.workflow.graph import run_workflow
+from models.schemas import FRONTEND_METADATA_TEMPLATE
+from models.state import ChatState, Message
+from workflow.graph import run_workflow
 
 
 EMPTY_VALUES = (None, "", [], {})
