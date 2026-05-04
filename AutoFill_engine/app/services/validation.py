@@ -1,3 +1,5 @@
+import re
+from datetime import datetime
 from typing import Any
 
 from app.config.field_config import FIELD_CONFIG
@@ -24,6 +26,8 @@ def get_missing_required_fields(metadata: dict[str, Any]) -> list[str]:
         value = metadata.get(field)
         if value is None or value == "" or value == [] or value == {}:
             missing_fields.append(field)
+        elif field == "expDatetime" and not _is_valid_iso_datetime(value):
+            missing_fields.append(field)
 
     if _chapters_need_titles(metadata):
         missing_fields.append("chapter")
@@ -44,3 +48,19 @@ def _chapters_need_titles(metadata: dict[str, Any]) -> bool:
         not isinstance(chapter, dict) or not chapter.get("chapterTitle")
         for chapter in chapters
     )
+
+
+def _is_valid_iso_datetime(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+
+    value = value.strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?", value):
+        return False
+
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+
+    return True

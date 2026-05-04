@@ -10,11 +10,25 @@ from typing import Any
 from openai import OpenAI
 
 from app.core.config import Settings
-from app.utils.date_parser import parse_relative_date
+from app.utils.date_parser import extract_expiry_intent, parse_expiry_datetime
 
 logger = logging.getLogger(__name__)
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".wmv"}
+CHAPTER_EXTENSIONS = {".pdf", *VIDEO_EXTENSIONS}
+ALLOWED_LLM_KEYS = {
+    "company",
+    "product",
+    "country",
+    "expDatetime",
+    "productionNotes",
+    "title",
+    "keyAuthor",
+    "coverPhoto",
+    "chapter",
+}
+EMPTY_VALUES = (None, "", [], {})
 
 FIELD_PATTERNS = {
     "company": [
@@ -36,13 +50,12 @@ FIELD_PATTERNS = {
         r"(?:production)\s*(?:is|:|-)\s*([^,.;\n]+)",
     ],
     "expDatetime": [
-        r"(?:expiry|expiration|exp(?:iry)?\s+date(?:time)?|expDatetime)\s*(?:is|:|-)\s*([^,.;\n]+)",
+        r"(?:expiry|expiration|expires?|exp(?:iry)?\s+date(?:time)?|expDatetime)\s*(?:is|in|after|from now is|from now|:|-)\s*([^,.;\n]+)",
     ],
     "productionNotes": [
         r"(?:production\s+notes?|notes?)\s*(?:is|are|:|-)\s*([^.;\n]+)",
     ],
 }
-
 
 def _client() -> OpenAI:
     settings = Settings()
@@ -52,6 +65,12 @@ def _client() -> OpenAI:
 
 def _clean_value(value: str) -> str:
     cleaned = value.strip().strip("\"'")
+    cleaned = re.sub(
+        r"^(?:company\s+name\s+is|name\s+of\s+the\s+company\s+is|this\s+is|it\s+is)\s+",
+        "",
+        cleaned,
+        flags=re.I,
+    )
     cleaned = re.split(
         r"\s+and\s+(?:author|key author|company|company name|product|country|production|expiry|expiration|thumbnail|cover|i have|the document|doc[\w.-]*)\b",
         cleaned,
@@ -60,6 +79,13 @@ def _clean_value(value: str) -> str:
     )[0]
     cleaned = re.sub(r"\s+", " ", cleaned)
     return cleaned.strip()
+
+
+def _normalize_string(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    cleaned = _clean_value(value)
+    return cleaned or None
 
 
 def _json_from_message(message: str) -> dict[str, Any]:
@@ -81,6 +107,11 @@ def _heuristic_field_value(message: str, field: str) -> Any:
     if field == "chapter":
         return extract_chapters_from_message(message, [])
 
+    if field == "expDatetime":
+        candidate = extract_expiry_intent(message) or message
+        parsed_exp_datetime = parse_expiry_datetime(candidate)
+        return parsed_exp_datetime or ""
+
     for pattern in FIELD_PATTERNS.get(field, []):
         match = re.search(pattern, message, re.I)
         if match:
@@ -98,6 +129,13 @@ def _heuristic_metadata(message: str, documents: list[str]) -> dict[str, Any]:
             if match:
                 metadata[field] = _clean_value(match.group(1))
                 break
+
+    metadata.pop("expDatetime", None)
+    date_candidate = extract_expiry_intent(message)
+    if date_candidate:
+        parsed_exp_datetime = parse_expiry_datetime(date_candidate)
+        if parsed_exp_datetime:
+            metadata["expDatetime"] = parsed_exp_datetime
 
     for document in documents:
         if Path(document).suffix.lower() in IMAGE_EXTENSIONS and re.search(
@@ -131,13 +169,12 @@ def _extract_with_openai(
                 {
                     "role": "system",
                     "content": (
-                        "Extract metadata from the user's message only. Return strict JSON. "
-                        "Allowed keys: company, product, country, expDatetime, "
-                        "productionNotes, title, keyAuthor, coverPhoto, chapter. "
-                        "there could be posibility that user might talk in normal language and typos are possible if you find some confusion please reply instantly please re frame the prompt"
-                        "chapter must be a list of objects with chapterTitle, uploadFile, "
-                        "fileValue, selectedVideo. Use uploaded document names when mentioned."
-                        "User can clearly mention the list of chapters that are mapped to chapters respectively Please give attention to this point."
+                        "Extract metadata from the user's message only. Return only strict JSON. "
+                        "Allowed keys: company, product, country, expDatetime, productionNotes, "
+                        "title, keyAuthor, coverPhoto, chapter. Do not include other keys. "
+                        "Do not compute relative dates. Only include expDatetime when the user provides "
+                        "an explicit ISO datetime. chapter must be a list of objects with chapterTitle, "
+                        "uploadFile, fileValue, selectedVideo. Use uploaded document names only. "
                         "Do not invent values."
                     ),
                 },
@@ -155,12 +192,99 @@ def _extract_with_openai(
             ],
             temperature=0,
             max_tokens=800,
+            response_format={"type": "json_object"},
         )
     except Exception as exc:
         logger.warning("OpenAI message metadata extraction failed | error=%s", exc)
         return {}
 
     return _json_from_message(response.choices[0].message.content or "{}")
+
+
+def _normalize_iso_datetime(value: Any) -> str | None:
+    if not _is_valid_iso_datetime(value):
+        return None
+    try:
+        return datetime.fromisoformat(str(value).strip().replace("Z", "+00:00")).replace(microsecond=0).isoformat()
+    except ValueError:
+        return None
+
+
+def _validated_cover_photo(value: Any, documents: list[str]) -> str | None:
+    cleaned = _normalize_string(value)
+    if not cleaned:
+        return None
+    for document in documents:
+        if Path(document).suffix.lower() in IMAGE_EXTENSIONS and document.lower() == cleaned.lower():
+            return document
+    return None
+
+
+def _validated_chapters(value: Any, documents: list[str]) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+
+    document_lookup = {document.lower(): document for document in documents}
+    chapters: list[dict[str, str]] = []
+    for chapter in value:
+        if not isinstance(chapter, dict):
+            continue
+
+        title = _normalize_string(chapter.get("chapterTitle"))
+        upload_file = _normalize_string(chapter.get("uploadFile") or chapter.get("fileValue"))
+        selected_video = _normalize_string(chapter.get("selectedVideo"))
+        filename = upload_file or selected_video
+        if not title or not filename:
+            continue
+
+        document = document_lookup.get(filename.lower())
+        if not document:
+            continue
+
+        suffix = Path(document).suffix.lower()
+        if suffix == ".pdf":
+            chapters.append(_chapter_row(title, upload_file=document))
+        elif suffix in VIDEO_EXTENSIONS:
+            chapters.append(_chapter_row(title, selected_video=document))
+
+    return chapters
+
+
+def _validated_llm_metadata(
+    metadata: dict[str, Any],
+    documents: list[str],
+    allow_exp_datetime: bool,
+) -> dict[str, Any]:
+    validated: dict[str, Any] = {}
+
+    for key, value in metadata.items():
+        if key not in ALLOWED_LLM_KEYS or value in EMPTY_VALUES:
+            continue
+
+        if key == "expDatetime":
+            if allow_exp_datetime:
+                normalized_datetime = _normalize_iso_datetime(value)
+                if normalized_datetime:
+                    validated[key] = normalized_datetime
+            continue
+
+        if key == "coverPhoto":
+            cover_photo = _validated_cover_photo(value, documents)
+            if cover_photo:
+                validated[key] = cover_photo
+            continue
+
+        if key == "chapter":
+            chapters = _validated_chapters(value, documents)
+            if chapters:
+                validated[key] = chapters
+            continue
+
+        cleaned = _normalize_string(value)
+        if cleaned:
+            validated[key] = cleaned
+
+    return validated
 
 
 def _is_valid_iso_datetime(value: Any) -> bool:
@@ -185,26 +309,36 @@ def extract_message_metadata(
     pending_field: str | None = None,
 ) -> dict[str, Any]:
     metadata = _heuristic_metadata(message, documents)
-    metadata.pop("expDatetime", None)
+    parsed_exp_datetime = metadata.get("expDatetime")
 
-    parsed_exp_datetime = parse_relative_date(message)
-    if parsed_exp_datetime:
-        metadata["expDatetime"] = parsed_exp_datetime
+    if parsed_exp_datetime and set(metadata) == {"expDatetime"}:
+        return metadata
 
     llm_metadata = _extract_with_openai(message, documents, pending_field)
+    llm_metadata = _validated_llm_metadata(
+        llm_metadata,
+        documents,
+        allow_exp_datetime=not bool(parsed_exp_datetime),
+    )
+
     if parsed_exp_datetime:
         llm_metadata.pop("expDatetime", None)
-    elif "expDatetime" in llm_metadata and not _is_valid_iso_datetime(llm_metadata["expDatetime"]):
-        llm_metadata.pop("expDatetime", None)
 
-    metadata.update({key: value for key, value in llm_metadata.items() if value not in (None, "", [], {})})
+    metadata.update({key: value for key, value in llm_metadata.items() if value not in EMPTY_VALUES})
     return metadata
 
 
 def extract_pending_field_value(message: str, field: str, documents: list[str]) -> Any:
+    if field == "expDatetime":
+        parsed_exp_datetime = parse_expiry_datetime(extract_expiry_intent(message) or message)
+        if parsed_exp_datetime:
+            return parsed_exp_datetime
+
     metadata = extract_message_metadata(message, documents, field)
     if field in metadata and metadata[field] not in (None, "", [], {}):
         return metadata[field]
+    if field == "chapter":
+        return extract_chapters_from_message(message, documents)
     return _heuristic_field_value(message, field)
 
 
@@ -235,6 +369,7 @@ def _chapter_number(snippet: str) -> str | None:
 def _chapter_title(snippet: str) -> str | None:
     patterns = [
         r"(?:titled|chapter\s+title\s+is)\s+([^,.;\n]+)",
+        r"(?:called|named)\s+([^,.;\n]+)",
         r"chapter\s*\d+\s*(?:is|:|-)\s*([^,.;\n]+)",
     ]
     for pattern in patterns:
@@ -262,39 +397,30 @@ def extract_chapters_from_message(message: str, documents: list[str]) -> list[di
 
     for document in documents:
         suffix = Path(document).suffix.lower()
-        if suffix not in {".pdf", ".mp4", ".mov", ".mkv", ".webm", ".avi", ".wmv"}:
+        if suffix not in CHAPTER_EXTENSIONS:
             continue
 
-        match = re.search(re.escape(document), message, re.I)
-        if not match:
-            continue
+        title = None
+        file_pattern = re.escape(document)
+        patterns = [
+            rf"\b{file_pattern}\b\s*(?:is|as|=)?\s*chapter\s*\d+\s*(?:titled|called|named|:|-)?\s*([^,.;\n]+)",
+            rf"chapter\s*\d+\s*(?:is|:|-)\s*\b{file_pattern}\b\s*(?:titled|called|named|:|-)?\s*([^,.;\n]+)",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, message, re.I)
+            if match:
+                title = _clean_value(match.group(1))
+                break
 
-        snippet = message[match.start() : match.end() + 180]
-        number = _chapter_number(snippet)
-        title = _chapter_title(snippet)
-        if not title and number:
-            title = f"Chapter {number}"
+        if not title:
+            match = re.search(file_pattern, message, re.I)
+            if match:
+                snippet = message[max(0, match.start() - 80) : match.end() + 180]
+                title = _chapter_title(snippet)
 
         if title:
-            selected_video = document if suffix in {".mp4", ".mov", ".mkv", ".webm", ".avi", ".wmv"} else ""
+            selected_video = document if suffix in VIDEO_EXTENSIONS else ""
             upload_file = "" if selected_video else document
             chapters.append(_chapter_row(title, upload_file, selected_video))
-
-    if chapters:
-        return chapters
-
-    ordered_titles = []
-    for match in re.finditer(r"chapter\s*\d+\s*[:\-]?\s*([^,.;\n]+)", message, re.I):
-        title = _clean_value(match.group(1))
-        if title:
-            ordered_titles.append(title)
-
-    if not ordered_titles:
-        return []
-
-    pdf_documents = [document for document in documents if Path(document).suffix.lower() == ".pdf"]
-    for index, title in enumerate(ordered_titles):
-        upload_file = pdf_documents[index] if index < len(pdf_documents) else ""
-        chapters.append(_chapter_row(title, upload_file))
 
     return chapters

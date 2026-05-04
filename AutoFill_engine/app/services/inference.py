@@ -135,10 +135,9 @@ def infer_file_metadata(
     if office_documents:
         metadata["officeFile"] = office_documents[0]
 
-    if not _has_chapter_data(current_metadata):
-        chapters = infer_default_chapters(documents)
-        if chapters:
-            metadata["chapter"] = chapters
+    chapters = infer_default_chapters(documents)
+    if chapters:
+        metadata["chapter"] = chapters
 
     requested_format = None
     if current_metadata:
@@ -146,21 +145,6 @@ def infer_file_metadata(
 
     warnings = infer_format_warnings(documents, requested_format or production_format)
     return metadata, warnings
-
-
-def _has_chapter_data(metadata: dict[str, object] | None) -> bool:
-    chapters = (metadata or {}).get("chapter")
-    if not isinstance(chapters, list):
-        return False
-    return any(
-        isinstance(chapter, dict)
-        and (
-            chapter.get("chapterTitle")
-            or chapter.get("uploadFile")
-            or chapter.get("selectedVideo")
-        )
-        for chapter in chapters
-    )
 
 
 def infer_default_chapters(documents: list[str]) -> list[dict[str, Any]]:
