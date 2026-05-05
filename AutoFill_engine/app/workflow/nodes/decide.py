@@ -7,7 +7,6 @@ logger = logging.getLogger(__name__)
 
 
 def decide_next_action(state: ChatState) -> ChatState:
-   
     missing_fields = state.get("missing_fields", [])
 
     if missing_fields:
@@ -17,13 +16,22 @@ def decide_next_action(state: ChatState) -> ChatState:
             state.get("session_id"),
             pending_field,
         )
+
+        base_question = QUESTIONS.get(
+            pending_field,
+            f"Please provide {pending_field}.",
+        )
+
+        if len(missing_fields) > 1:
+            remaining_str = ", ".join(missing_fields)
+            pending_question = f"We are still missing the following details: {remaining_str}.\n\n{base_question}"
+        else:
+            pending_question = base_question
+
         return {
             **state,
             "pending_field": pending_field,
-            "pending_question": QUESTIONS.get(
-                pending_field,
-                f"Please provide {pending_field}.",
-            ),
+            "pending_question": pending_question,
             "next_action": "ask_user",
         }
 

@@ -68,7 +68,7 @@ def chat(request: ChatRequest) -> ChatResponse:
         "user_message": request.message,
         "documents": request.documents,
         "metadata": metadata,
-        "messages": messages[-5:],
+        "messages": messages[-8:],
     }
 
     result = run_workflow(state)
@@ -84,7 +84,7 @@ def chat(request: ChatRequest) -> ChatResponse:
         result["messages"] = [
             *result.get("messages", []),
             Message(role="assistant", content=result["bot_message"]),
-        ][-5:]
+        ][-8:]
 
     _sessions[session_id] = result
     logger.info(

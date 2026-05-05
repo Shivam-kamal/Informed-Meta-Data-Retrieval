@@ -162,7 +162,7 @@ def _extract_with_openai(
     settings = Settings()
     if not settings.openai_api_key:
         return {}
-
+#"If a user gives a one word reply considering that user might be giving answer of the respective Qiuestion only , Try to understand !"
     try:
         response = _client().chat.completions.create(
             model=settings.openai_model,
@@ -177,6 +177,7 @@ def _extract_with_openai(
                         "an explicit ISO datetime. chapter must be a list of objects with chapterTitle, "
                         "uploadFile, fileValue, selectedVideo. Use uploaded document names only. "
                         "Do not invent values."
+                        
                     ),
                 },
                 {
