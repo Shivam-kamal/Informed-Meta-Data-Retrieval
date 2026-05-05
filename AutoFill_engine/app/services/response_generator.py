@@ -20,7 +20,7 @@ def generate_response(state: ChatState) -> str:
     next_action = state.get("next_action")
 
     if next_action == "ready":
-        return "Everything looks good, your form is ready."
+        return "Your Form is ready, Please Click Next!! "
 
     question = state.get("pending_question") or state.get("bot_message") or ""
     if next_action != "ask_user" or not question:
