@@ -162,7 +162,7 @@ def _extract_with_openai(
     settings = Settings()
     if not settings.openai_api_key:
         return {}
-#"If a user gives a one word reply considering that user might be giving answer of the respective Qiuestion only , Try to understand !"
+
     try:
         response = _client().chat.completions.create(
             model=settings.openai_model,
@@ -170,14 +170,14 @@ def _extract_with_openai(
                 {
                     "role": "system",
                     "content": (
-                        "Extract metadata from the user's message only. Return only strict JSON. "
-                        "Allowed keys: company, product, country, expDatetime, production, productionNotes, "
-                        "title, keyAuthor, coverPhoto, chapter. Do not include other keys. "
-                        "Do not compute relative dates. Only include expDatetime when the user provides "
-                        "an explicit ISO datetime. chapter must be a list of objects with chapterTitle, "
-                        "uploadFile, fileValue, selectedVideo. Use uploaded document names only. "
-                        "Do not invent values."
-                        
+                        "Extract metadata from the user's message and return strict JSON.\n"
+                        "RULES:\n"
+                        "1. Allowed keys: company, product, country, expDatetime, production, productionNotes, title, keyAuthor, coverPhoto, chapter.\n"
+                        "2. Never invent values. Only extract explicit statements.\n"
+                        "3. Pay special attention to the 'pending_field'; if the user provides a raw value, it likely belongs to this field.\n"
+                        "4. Distinguish carefully between 'production' and 'productionNotes'.\n"
+                        "5. Do not compute relative dates. 'expDatetime' must be an explicit ISO datetime if provided.\n"
+                        "6. 'chapter' must be a list of objects (chapterTitle, uploadFile, fileValue, selectedVideo) using ONLY names from the provided 'documents'."
                     ),
                 },
                 {
