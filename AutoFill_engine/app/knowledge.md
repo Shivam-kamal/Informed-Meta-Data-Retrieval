@@ -81,7 +81,6 @@ Current graph:
 
 ```text
 START
-  -> apply_pending_field
   -> infer_metadata
   -> merge_metadata
   -> validate_required_fields
@@ -92,13 +91,9 @@ START
 
 Node responsibilities:
 
-- `apply_pending_field`
-  - If the previous bot question set `pending_field`, the latest user reply is applied to that field first.
-  - This makes pending-field answers highest priority.
-
 - `infer_metadata`
   - Infers file metadata from uploaded document names.
-  - Extracts metadata from the user message using deterministic regex/date parsing and validated LLM output.
+  - Extracts metadata from the user message using deterministic regex/date parsing and validated LLM output, with context of the `pending_field`.
 
 - `merge_metadata`
   - Merges base metadata, deterministic inference, and extracted message metadata.
@@ -362,11 +357,9 @@ When the bot asks for a field, that field is stored as `pending_field`.
 
 On the next user message:
 
-1. `apply_pending_field` runs before inference.
-2. The latest message is interpreted as the answer to `pending_field`.
-3. The answer is written into `metadata[pending_field]`.
-4. `pending_field` and `pending_question` are cleared.
-5. `is_followup` is set to `True`.
+1. `infer_metadata` extracts the answer with context of the `pending_field`.
+2. The extracted answer is written into `metadata` during the `merge_metadata` phase.
+3. `decide_next_action` will update or clear the `pending_field` based on remaining missing fields.
 
 For example:
 

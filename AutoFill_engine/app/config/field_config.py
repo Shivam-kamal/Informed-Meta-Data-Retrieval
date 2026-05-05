@@ -15,7 +15,8 @@ QUESTIONS = {
     "product": "Please select the product.",
     "country": "Which country is this for?",
     "production": "What is the production value?",
-    "expDatetime": "Please provide the expiry date and time.",
+    "expDatetime": "Please provide expiry date and time.",
     "productionNotes": "Any production notes for the DocIntel team?",
     "chapter": "Please provide chapter titles for all uploaded files in order or with file names.",
+    "missing_documents": "You provided chapter titles but forgot to upload the documents. Please upload them!",
 }

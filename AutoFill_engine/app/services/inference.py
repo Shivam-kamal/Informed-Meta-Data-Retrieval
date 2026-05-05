@@ -84,6 +84,30 @@ def resolve_production_format(documents: list[str]) -> str | None:
     return None
 
 
+def _drop_leading_empty_chapter(
+    chapters: object,
+    production_format: str | None,
+) -> object:
+    # Only act for ebook formats
+    if production_format not in {"ebook", "ebook+ video"}:
+        return chapters
+
+    # Validate shape
+    if not isinstance(chapters, list) or not chapters:
+        return chapters
+
+    first = chapters[0]
+    if not isinstance(first, dict):
+        return chapters
+
+    file_value = str(first.get("fileValue") or "").strip()
+
+    # If first row is placeholder → drop index 0
+    if file_value == "":
+        return chapters[1:]
+
+    return chapters
+
 def infer_file_type(documents: list[str]) -> str | None:
     return resolve_production_format(documents)
 
@@ -134,7 +158,18 @@ def infer_file_metadata(
     ]
     if office_documents:
         metadata["officeFile"] = office_documents[0]
+##
+    if current_metadata and production_format in {"ebook", "ebook+ video"}:
+        chapters = current_metadata.get("chapter")
 
+        if isinstance(chapters, list)and len(chapters)>0:
+            first= chapters[0]
+            if isinstance(first, dict):
+                file_value = str(first.get("filevalue")or "").strip()
+                if file_value == "":
+                    current_metadata["chapter"]= chapters[1:]
+
+    
     chapters = infer_default_chapters(documents)
     if chapters:
         metadata["chapter"] = chapters
@@ -154,7 +189,7 @@ def infer_default_chapters(documents: list[str]) -> list[dict[str, Any]]:
     if production_format not in {"ebook", "ebook+ video"}:
         return []
 
-    chapters:list[dict[str,Any]] = []
+    
 
     for document in documents:
         category = infer_document_category(document)

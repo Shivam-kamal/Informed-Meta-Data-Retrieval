@@ -29,10 +29,30 @@ def get_missing_required_fields(metadata: dict[str, Any]) -> list[str]:
         elif field == "expDatetime" and not _is_valid_iso_datetime(value):
             missing_fields.append(field)
 
+    if _chapters_need_documents(metadata):
+        missing_fields.append("missing_documents")
+
     if _chapters_need_titles(metadata):
         missing_fields.append("chapter")
 
     return missing_fields
+
+
+def _chapters_need_documents(metadata: dict[str, Any]) -> bool:
+    chapters = metadata.get("chapter")
+    if not isinstance(chapters, list):
+        return False
+
+    for chapter in chapters:
+        if not isinstance(chapter, dict):
+            continue
+        title = chapter.get("chapterTitle")
+        upload_file = chapter.get("uploadFile")
+        selected_video = chapter.get("selectedVideo")
+        if title and not upload_file and not selected_video:
+            return True
+            
+    return False
 
 
 def _chapters_need_titles(metadata: dict[str, Any]) -> bool:

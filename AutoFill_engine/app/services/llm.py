@@ -22,6 +22,7 @@ ALLOWED_LLM_KEYS = {
     "product",
     "country",
     "expDatetime",
+    "production",
     "productionNotes",
     "title",
     "keyAuthor",
@@ -170,7 +171,7 @@ def _extract_with_openai(
                     "role": "system",
                     "content": (
                         "Extract metadata from the user's message only. Return only strict JSON. "
-                        "Allowed keys: company, product, country, expDatetime, productionNotes, "
+                        "Allowed keys: company, product, country, expDatetime, production, productionNotes, "
                         "title, keyAuthor, coverPhoto, chapter. Do not include other keys. "
                         "Do not compute relative dates. Only include expDatetime when the user provides "
                         "an explicit ISO datetime. chapter must be a list of objects with chapterTitle, "
@@ -234,11 +235,16 @@ def _validated_chapters(value: Any, documents: list[str]) -> list[dict[str, str]
         upload_file = _normalize_string(chapter.get("uploadFile") or chapter.get("fileValue"))
         selected_video = _normalize_string(chapter.get("selectedVideo"))
         filename = upload_file or selected_video
-        if not title or not filename:
+        if not title:
+            continue
+
+        if not filename:
+            chapters.append(_chapter_row(title))
             continue
 
         document = document_lookup.get(filename.lower())
         if not document:
+            chapters.append(_chapter_row(title))
             continue
 
         suffix = Path(document).suffix.lower()
@@ -246,6 +252,8 @@ def _validated_chapters(value: Any, documents: list[str]) -> list[dict[str, str]
             chapters.append(_chapter_row(title, upload_file=document))
         elif suffix in VIDEO_EXTENSIONS:
             chapters.append(_chapter_row(title, selected_video=document))
+        else:
+            chapters.append(_chapter_row(title))
 
     return chapters
 
@@ -328,18 +336,7 @@ def extract_message_metadata(
     return metadata
 
 
-def extract_pending_field_value(message: str, field: str, documents: list[str]) -> Any:
-    if field == "expDatetime":
-        parsed_exp_datetime = parse_expiry_datetime(extract_expiry_intent(message) or message)
-        if parsed_exp_datetime:
-            return parsed_exp_datetime
 
-    metadata = extract_message_metadata(message, documents, field)
-    if field in metadata and metadata[field] not in (None, "", [], {}):
-        return metadata[field]
-    if field == "chapter":
-        return extract_chapters_from_message(message, documents)
-    return _heuristic_field_value(message, field)
 
 
 def _chapter_number(snippet: str) -> str | None:

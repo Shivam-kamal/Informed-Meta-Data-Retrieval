@@ -20,10 +20,10 @@ def merge_metadata(
     overwrite_keys = overwrite_keys or set()
 
     sources = (
-        (inferred_metadata or {}, True),
-        (extracted_metadata or {}, False),
+        (inferred_metadata or {}, True, False),
+        (extracted_metadata or {}, False, True),
     )
-    for source, allow_new_chapters in sources:
+    for source, allow_new_chapters, always_overwrite in sources:
         for key, value in source.items():
             if not is_present(value):
                 continue
@@ -34,7 +34,7 @@ def merge_metadata(
                     allow_new=allow_new_chapters,
                 )
                 continue
-            if key not in overwrite_keys and is_present(merged.get(key)):
+            if not always_overwrite and key not in overwrite_keys and is_present(merged.get(key)):
                 continue
             merged[key] = value
 
@@ -75,6 +75,20 @@ def _merge_chapters(
                     }
                 matched = True
                 break
+
+        if not matched and incoming_identity:
+            for index, current_chapter in enumerate(current):
+                if not isinstance(current_chapter, dict):
+                    continue
+                if not _chapter_identity(current_chapter) and is_present(current_chapter.get("chapterTitle")):
+                    current[index] = {
+                        **current_chapter,
+                        "uploadFile": incoming_chapter.get("uploadFile", ""),
+                        "fileValue": incoming_chapter.get("fileValue", ""),
+                        "selectedVideo": incoming_chapter.get("selectedVideo", ""),
+                    }
+                    matched = True
+                    break
 
         if not matched and allow_new:
             current.append(incoming_chapter)
