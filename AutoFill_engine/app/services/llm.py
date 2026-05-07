@@ -17,6 +17,18 @@ logger = logging.getLogger(__name__)
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".wmv"}
 CHAPTER_EXTENSIONS = {".pdf", *VIDEO_EXTENSIONS}
+ORDINAL_WORDS = {
+    "first": 1,
+    "second": 2,
+    "third": 3,
+    "fourth": 4,
+    "fifth": 5,
+    "sixth": 6,
+    "seventh": 7,
+    "eighth": 8,
+    "ninth": 9,
+    "tenth": 10,
+}
 ALLOWED_LLM_KEYS = {
     "company",
     "product",
@@ -36,7 +48,7 @@ FIELD_PATTERNS = {
         r"(?:company(?:\s+name)?|name\s+of\s+the\s+company)\s*(?:is|:|-)\s*([^,.;\n]+)",
     ],
     "title": [
-        r"(?:document\s+title|title)\s*(?:is|:|-)\s*([^,.;\n]+)",
+        r"(?:main\s+document\s+ti(?:tle|ltle|lte)|document\s+ti(?:tle|ltle|lte)|(?<!chapter\s)ti(?:tle|ltle|lte))\s*(?:is|:|-)\s*([^,.;\n]+)",
     ],
     "keyAuthor": [
         r"(?:key\s+author|author)\s*(?:is|:|-)\s*([^,.;\n]+)",
@@ -87,6 +99,25 @@ def _normalize_string(value: Any) -> str | None:
         return None
     cleaned = _clean_value(value)
     return cleaned or None
+
+
+def _chapter_capable_documents(documents: list[str]) -> list[str]:
+    return [
+        document
+        for document in documents
+        if Path(document).suffix.lower() in CHAPTER_EXTENSIONS
+    ]
+
+
+def _message_has_chapter_intent(message: str, documents: list[str]) -> bool:
+    chapter_documents = _chapter_capable_documents(documents)
+    lowered_message = message.lower()
+    if "chapter" in lowered_message:
+        return True
+    if re.search(r"\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\b", lowered_message):
+        if re.search(r"\b(pdf|video|title|tilte|tile|sequence|order)\b", lowered_message):
+            return True
+    return any(document.lower() in lowered_message for document in chapter_documents)
 
 
 def _json_from_message(message: str) -> dict[str, Any]:
@@ -163,6 +194,8 @@ def _extract_with_openai(
     if not settings.openai_api_key:
         return {}
 
+    effective_pending_field = None if _message_has_chapter_intent(message, documents) else pending_field
+
     try:
         response = _client().chat.completions.create(
             model=settings.openai_model,
@@ -186,7 +219,7 @@ def _extract_with_openai(
                         {
                             "message": message,
                             "documents": documents,
-                            "pending_field": pending_field,
+                            "pending_field": effective_pending_field,
                         },
                         ensure_ascii=True,
                     ),
@@ -236,25 +269,25 @@ def _validated_chapters(value: Any, documents: list[str]) -> list[dict[str, str]
         upload_file = _normalize_string(chapter.get("uploadFile") or chapter.get("fileValue"))
         selected_video = _normalize_string(chapter.get("selectedVideo"))
         filename = upload_file or selected_video
-        if not title:
+        if not title and not filename:
             continue
 
         if not filename:
-            chapters.append(_chapter_row(title))
+            chapters.append(_chapter_row(title or ""))
             continue
 
         document = document_lookup.get(filename.lower())
         if not document:
-            chapters.append(_chapter_row(title))
+            chapters.append(_chapter_row(title or ""))
             continue
 
         suffix = Path(document).suffix.lower()
         if suffix == ".pdf":
-            chapters.append(_chapter_row(title, upload_file=document))
+            chapters.append(_chapter_row(title or "", upload_file=document))
         elif suffix in VIDEO_EXTENSIONS:
-            chapters.append(_chapter_row(title, selected_video=document))
+            chapters.append(_chapter_row(title or "", selected_video=document))
         else:
-            chapters.append(_chapter_row(title))
+            chapters.append(_chapter_row(title or ""))
 
     return chapters
 
@@ -319,6 +352,7 @@ def extract_message_metadata(
 ) -> dict[str, Any]:
     metadata = _heuristic_metadata(message, documents)
     parsed_exp_datetime = metadata.get("expDatetime")
+    chapter_intent = _message_has_chapter_intent(message, documents)
 
     if parsed_exp_datetime and set(metadata) == {"expDatetime"}:
         return metadata
@@ -329,6 +363,8 @@ def extract_message_metadata(
         documents,
         allow_exp_datetime=not bool(parsed_exp_datetime),
     )
+    if chapter_intent and pending_field:
+        llm_metadata.pop(pending_field, None)
 
     if parsed_exp_datetime:
         llm_metadata.pop("expDatetime", None)
@@ -345,28 +381,16 @@ def _chapter_number(snippet: str) -> str | None:
     if match:
         return match.group(1)
 
-    ordinals = {
-        "first": "1",
-        "second": "2",
-        "third": "3",
-        "fourth": "4",
-        "fifth": "5",
-        "sixth": "6",
-        "seventh": "7",
-        "eighth": "8",
-        "ninth": "9",
-        "tenth": "10",
-    }
-    for word, number in ordinals.items():
+    for word, number in ORDINAL_WORDS.items():
         if re.search(rf"\b{word}\s+chapter\b|\bchapter\s+{word}\b", snippet, re.I):
-            return number
+            return str(number)
 
     return None
 
 
 def _chapter_title(snippet: str) -> str | None:
     patterns = [
-        r"(?:titled|chapter\s+title\s+is)\s+([^,.;\n]+)",
+        r"(?:titled|chapter\s+ti(?:tle|lte|le|te)?\s+is)\s+([^,.;\n]+)",
         r"(?:called|named)\s+([^,.;\n]+)",
         r"chapter\s*\d+\s*(?:is|:|-)\s*([^,.;\n]+)",
     ]
@@ -390,8 +414,133 @@ def _chapter_row(
     }
 
 
-def extract_chapters_from_message(message: str, documents: list[str]) -> list[dict[str, str]]:
+def _parse_ordinal_reference(snippet: str) -> int | None:
+    number_match = re.search(r"\bchapter\s*(\d+)\b", snippet, re.I)
+    if number_match:
+        return int(number_match.group(1))
+
+    for word, number in ORDINAL_WORDS.items():
+        if re.search(rf"\b{word}\b", snippet, re.I):
+            return number
+
+    return None
+
+
+def _chapter_media_type(snippet: str) -> str | None:
+    if re.search(r"\bpdf\b", snippet, re.I):
+        return "pdf"
+    if re.search(r"\bvideo\b", snippet, re.I):
+        return "video"
+    return None
+
+
+def _ordinal_chapter_instructions(
+    message: str,
+    documents: list[str],
+) -> list[dict[str, str]]:
+    chapter_documents = _chapter_capable_documents(documents)
+    if not chapter_documents:
+        return []
+
+    instructions: dict[int, dict[str, str]] = {}
+    normalized_message = re.sub(r"\bone\b", "chapter", message, flags=re.I)
+
+    title_pattern = re.compile(
+        r"\b(?:(chapter\s*\d+)|((?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth))(?:\s+chapter)?)\b"
+        r"[^.:\n]{0,60}?\b(?:chapter\s+)?ti(?:tle|lte|le|te)?\s*(?:is|=|:|-)\s*[\"']?([^\"'\n,.]+)",
+        re.I,
+    )
+    for match in title_pattern.finditer(normalized_message):
+        index = _parse_ordinal_reference(match.group(0))
+        title = _normalize_string(match.group(3))
+        if index and title:
+            instructions.setdefault(index, {})["chapterTitle"] = title
+
+    named_title_pattern = re.compile(
+        r"\b(?:(chapter\s*\d+)|((?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth))(?:\s+chapter)?)\b"
+        r"[^.:\n]{0,40}?\b(?:is|as|to\s+be)\s*[\"']?([^\"'\n,.]+)[\"']?",
+        re.I,
+    )
+    for match in named_title_pattern.finditer(normalized_message):
+        snippet = match.group(0)
+        index = _parse_ordinal_reference(snippet)
+        candidate = _normalize_string(match.group(3))
+        if not index or not candidate:
+            continue
+        if _chapter_media_type(candidate):
+            continue
+        if re.search(r"\bchapter\b", candidate, re.I):
+            continue
+        instructions.setdefault(index, {}).setdefault("chapterTitle", candidate)
+
+    type_pattern = re.compile(
+        r"\b(?:(chapter\s*\d+)|((?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth))(?:\s+(?:chapter|one))?)\b"
+        r"[^.:\n]{0,40}?\b(?:(?:is|as|to\s+be)\s+)?(?:a\s+)?(pdf|video)\b",
+        re.I,
+    )
+    for match in type_pattern.finditer(normalized_message):
+        index = _parse_ordinal_reference(match.group(0))
+        media_type = _chapter_media_type(match.group(3))
+        if index and media_type:
+            instructions.setdefault(index, {})["mediaType"] = media_type
+
+    if not instructions:
+        return []
+
+    pdf_documents = [
+        document for document in chapter_documents if Path(document).suffix.lower() == ".pdf"
+    ]
+    video_documents = [
+        document for document in chapter_documents if Path(document).suffix.lower() in VIDEO_EXTENSIONS
+    ]
+    unused_documents = list(chapter_documents)
+    used_documents: set[str] = set()
     chapters: list[dict[str, str]] = []
+
+    def assign_document(media_type: str | None) -> str | None:
+        if media_type == "pdf":
+            candidates = pdf_documents
+        elif media_type == "video":
+            candidates = video_documents
+        else:
+            candidates = chapter_documents
+
+        for document in candidates:
+            if document not in used_documents:
+                used_documents.add(document)
+                if document in unused_documents:
+                    unused_documents.remove(document)
+                return document
+        return None
+
+    for index in sorted(instructions):
+        instruction = instructions[index]
+        document = assign_document(instruction.get("mediaType"))
+        title = instruction.get("chapterTitle", "")
+
+        if not document:
+            chapters.append(_chapter_row(title))
+            continue
+
+        suffix = Path(document).suffix.lower()
+        if suffix == ".pdf":
+            chapters.append(_chapter_row(title, upload_file=document))
+        else:
+            chapters.append(_chapter_row(title, selected_video=document))
+
+    return chapters
+
+
+def extract_chapters_from_message(message: str, documents: list[str]) -> list[dict[str, str]]:
+    ordinal_chapters = _ordinal_chapter_instructions(message, documents)
+    chapters_by_identity: dict[str, dict[str, str]] = {}
+
+    for chapter in ordinal_chapters:
+        identity = chapter.get("uploadFile") or chapter.get("selectedVideo")
+        if identity:
+            chapters_by_identity[identity] = chapter
+
+    chapters: list[dict[str, str]] = list(ordinal_chapters)
 
     for document in documents:
         suffix = Path(document).suffix.lower()
@@ -419,6 +568,15 @@ def extract_chapters_from_message(message: str, documents: list[str]) -> list[di
         if title:
             selected_video = document if suffix in VIDEO_EXTENSIONS else ""
             upload_file = "" if selected_video else document
-            chapters.append(_chapter_row(title, upload_file, selected_video))
+            chapter = _chapter_row(title, upload_file, selected_video)
+            identity = upload_file or selected_video
+            existing = chapters_by_identity.get(identity)
+            if existing:
+                if not existing.get("chapterTitle"):
+                    existing["chapterTitle"] = title
+                continue
+            chapters.append(chapter)
+            if identity:
+                chapters_by_identity[identity] = chapter
 
     return chapters

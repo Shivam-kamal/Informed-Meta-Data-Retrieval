@@ -31,6 +31,7 @@ def generate_response(state: ChatState) -> str:
         "question": question,
         "next_action": next_action,
         "metadata": state.get("metadata", {}),
+        
     }
 
     try:
@@ -41,8 +42,9 @@ def generate_response(state: ChatState) -> str:
                     "role": "system",
                     "content": (
                         "You rephrase deterministic form autofill prompts. "
+
                         "Keep the response short, friendly, and natural. "
-                        "Use 1-2 lines only. Do not add facts, assumptions, or extra information. "
+                        "Use 1-2 lines only. Do not add facts, assumptions, or extra information."
                         "Only ask for the provided question."
                     ),
                 },

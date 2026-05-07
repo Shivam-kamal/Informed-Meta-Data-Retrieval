@@ -55,6 +55,26 @@ def _merge_chapters(
     else:
         current = list(current_value)
 
+    current_by_identity = {
+        _chapter_identity(chapter): chapter
+        for chapter in current
+        if isinstance(chapter, dict) and _chapter_identity(chapter)
+    }
+    incoming_identities = [
+        _chapter_identity(chapter)
+        for chapter in incoming_value
+        if isinstance(chapter, dict) and _chapter_identity(chapter)
+    ]
+    if incoming_identities and set(incoming_identities).issubset(set(current_by_identity)):
+        reordered_current = [current_by_identity[identity] for identity in incoming_identities]
+        remaining_current = [
+            chapter
+            for chapter in current
+            if not isinstance(chapter, dict)
+            or _chapter_identity(chapter) not in set(incoming_identities)
+        ]
+        current = reordered_current + remaining_current
+
     for incoming_chapter in incoming_value:
         if not isinstance(incoming_chapter, dict):
             continue
@@ -66,13 +86,10 @@ def _merge_chapters(
             if not isinstance(current_chapter, dict):
                 continue
             if incoming_identity and _chapter_identity(current_chapter) == incoming_identity:
-                if not is_present(current_chapter.get("chapterTitle")) and is_present(
-                    incoming_chapter.get("chapterTitle")
-                ):
-                    current[index] = {
-                        **current_chapter,
-                        "chapterTitle": incoming_chapter["chapterTitle"],
-                    }
+                updated_chapter = dict(current_chapter)
+                if is_present(incoming_chapter.get("chapterTitle")):
+                    updated_chapter["chapterTitle"] = incoming_chapter["chapterTitle"]
+                current[index] = updated_chapter
                 matched = True
                 break
 
